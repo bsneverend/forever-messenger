@@ -1,10 +1,10 @@
-const CACHE_NAME = "forever-shell-v6";
+const CACHE_NAME = "forever-shell-v7";
 
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css",
-  "./app.js",
+  "./style.css?v=preview-pan-2",
+  "./app.js?v=preview-pan-2",
   "./manifest.json",
   "./assets/icon-192.png",
   "./assets/icon-192.png"
