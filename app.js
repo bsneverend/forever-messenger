@@ -47,8 +47,15 @@ const mediaPrevButton = $("media-prev-button");
 const mediaNextButton = $("media-next-button");
 let activePreviewMedia = null;
 let previewZoom = 1;
+let previewPanX = 0;
+let previewPanY = 0;
 let previewPinchDistance = 0;
 let previewPinchZoom = 1;
+let previewDragging = false;
+let previewDragStartX = 0;
+let previewDragStartY = 0;
+let previewDragPanStartX = 0;
+let previewDragPanStartY = 0;
 
 function initials(name) {
   return (name || "?")
@@ -180,15 +187,32 @@ function getActivePreviewElement() {
   return mediaModalContent.querySelector(".media-preview-image");
 }
 
-function resetPreviewZoom() {
-  previewZoom = 1;
-  previewPinchDistance = 0;
-  previewPinchZoom = 1;
+function applyPreviewTransform() {
   const media = getActivePreviewElement();
-  if (media) {
+  if (!media) return;
+  if (previewZoom <= 1) {
+    previewPanX = 0; previewPanY = 0;
     media.style.transform = "";
     media.style.transformOrigin = "";
+    return;
   }
+  const viewport = mediaModalContent.getBoundingClientRect();
+  const mediaRect = media.getBoundingClientRect();
+  const baseWidth = mediaRect.width / previewZoom;
+  const baseHeight = mediaRect.height / previewZoom;
+  const maxPanX = Math.max(0, (baseWidth * previewZoom - viewport.width) / 2);
+  const maxPanY = Math.max(0, (baseHeight * previewZoom - viewport.height) / 2);
+  previewPanX = Math.min(maxPanX, Math.max(-maxPanX, previewPanX));
+  previewPanY = Math.min(maxPanY, Math.max(-maxPanY, previewPanY));
+  media.style.transformOrigin = "center center";
+  media.style.transform = "translate(" + previewPanX + "px, " + previewPanY + "px) scale(" + previewZoom + ")";
+}
+
+function resetPreviewZoom() {
+  previewZoom = 1; previewPanX = 0; previewPanY = 0;
+  previewPinchDistance = 0; previewPinchZoom = 1; previewDragging = false;
+  const media = getActivePreviewElement();
+  if (media) { media.style.transform = ""; media.style.transformOrigin = ""; }
   updatePreviewZoomControls();
 }
 
@@ -199,17 +223,13 @@ function updatePreviewZoomControls() {
   if (mediaZoomInButton) mediaZoomInButton.disabled = !imagePreview || previewZoom >= 4;
 }
 
-function setPreviewZoom(value, originX = 50, originY = 50) {
+function setPreviewZoom(value) {
   if (!activePreviewMedia || activePreviewMedia.video) return;
   previewZoom = Math.min(4, Math.max(1, value));
-  const media = getActivePreviewElement();
-  if (media) {
-    media.style.transformOrigin = `${originX}% ${originY}%`;
-    media.style.transform = previewZoom === 1 ? "" : `scale(${previewZoom})`;
-  }
+  if (previewZoom <= 1) { previewPanX = 0; previewPanY = 0; }
+  applyPreviewTransform();
   updatePreviewZoomControls();
 }
-
 function zoomPreviewBy(delta) {
   setPreviewZoom(previewZoom + delta);
 }
@@ -329,6 +349,7 @@ async function renderActivePreview() {
   } else {
     media.alt = "Media preview";
     media.decoding = "async";
+    media.draggable = false;
   }
 
   mediaModalContent.replaceChildren(media);
@@ -451,63 +472,96 @@ function getTouchDistance(touches) {
   const dy = touches[0].clientY - touches[1].clientY;
   return Math.hypot(dx, dy);
 }
+function startPreviewDrag(x, y) {
+  if (previewZoom <= 1 || !activePreviewMedia || activePreviewMedia.video) return false;
+  previewDragging = true;
+  previewDragStartX = x; previewDragStartY = y;
+  previewDragPanStartX = previewPanX; previewDragPanStartY = previewPanY;
+  mediaModalContent.classList.add("is-dragging-media");
+  return true;
+}
+function movePreviewDrag(x, y) {
+  if (!previewDragging) return;
+  previewPanX = previewDragPanStartX + (x - previewDragStartX);
+  previewPanY = previewDragPanStartY + (y - previewDragStartY);
+  applyPreviewTransform();
+}
+function endPreviewDrag() {
+  previewDragging = false;
+  mediaModalContent.classList.remove("is-dragging-media");
+}
+
+mediaModalContent.addEventListener("pointerdown", (event) => {
+  if (event.pointerType !== "mouse" || event.button !== 0) return;
+  if (!startPreviewDrag(event.clientX, event.clientY)) return;
+  event.preventDefault();
+  mediaModalContent.setPointerCapture?.(event.pointerId);
+});
+mediaModalContent.addEventListener("pointermove", (event) => {
+  if (event.pointerType !== "mouse" || !previewDragging) return;
+  event.preventDefault();
+  movePreviewDrag(event.clientX, event.clientY);
+});
+mediaModalContent.addEventListener("pointerup", (event) => {
+  if (event.pointerType === "mouse") endPreviewDrag();
+});
+mediaModalContent.addEventListener("pointercancel", endPreviewDrag);
 
 mediaModalContent.addEventListener("touchstart", (event) => {
   if (!activePreviewMedia) return;
-
   if (event.touches.length === 2 && !activePreviewMedia.video) {
+    endPreviewDrag();
     previewPinching = true;
     previewPinchDistance = getTouchDistance(event.touches);
     previewPinchZoom = previewZoom;
-    previewSwipeStartX = 0;
-    previewSwipeStartY = 0;
+    previewSwipeStartX = 0; previewSwipeStartY = 0;
     return;
   }
-
   if (event.touches.length !== 1) return;
   previewPinching = false;
+  if (startPreviewDrag(event.touches[0].clientX, event.touches[0].clientY)) {
+    previewSwipeStartX = 0; previewSwipeStartY = 0;
+    return;
+  }
   previewSwipeStartX = event.touches[0].clientX;
   previewSwipeStartY = event.touches[0].clientY;
 }, { passive: true });
 
 mediaModalContent.addEventListener("touchmove", (event) => {
-  if (!previewPinching || event.touches.length !== 2 || !activePreviewMedia || activePreviewMedia.video) return;
-  event.preventDefault();
-
-  const distance = getTouchDistance(event.touches);
-  if (!previewPinchDistance) return;
-  const midpointX = (event.touches[0].clientX + event.touches[1].clientX) / 2;
-  const midpointY = (event.touches[0].clientY + event.touches[1].clientY) / 2;
-  const rect = mediaModalContent.getBoundingClientRect();
-  const originX = Math.min(100, Math.max(0, ((midpointX - rect.left) / rect.width) * 100));
-  const originY = Math.min(100, Math.max(0, ((midpointY - rect.top) / rect.height) * 100));
-
-  setPreviewZoom(previewPinchZoom * (distance / previewPinchDistance), originX, originY);
+  if (!activePreviewMedia || activePreviewMedia.video) return;
+  if (previewPinching && event.touches.length === 2) {
+    event.preventDefault();
+    const distance = getTouchDistance(event.touches);
+    if (!previewPinchDistance) return;
+    setPreviewZoom(previewPinchZoom * (distance / previewPinchDistance));
+    return;
+  }
+  if (previewDragging && event.touches.length === 1) {
+    event.preventDefault();
+    movePreviewDrag(event.touches[0].clientX, event.touches[0].clientY);
+  }
 }, { passive: false });
 
 mediaModalContent.addEventListener("touchend", (event) => {
   if (!activePreviewMedia) return;
-
   if (previewPinching) {
     if (event.touches.length < 2) previewPinching = false;
-    previewSwipeStartX = 0;
-    previewSwipeStartY = 0;
+    previewSwipeStartX = 0; previewSwipeStartY = 0;
     return;
   }
-
+  if (previewDragging) {
+    endPreviewDrag();
+    previewSwipeStartX = 0; previewSwipeStartY = 0;
+    return;
+  }
   if (!previewSwipeStartX || event.changedTouches.length !== 1 || previewZoom > 1) {
-    previewSwipeStartX = 0;
-    previewSwipeStartY = 0;
+    previewSwipeStartX = 0; previewSwipeStartY = 0;
     return;
   }
-
   const touch = event.changedTouches[0];
   const dx = touch.clientX - previewSwipeStartX;
   const dy = touch.clientY - previewSwipeStartY;
-
-  previewSwipeStartX = 0;
-  previewSwipeStartY = 0;
-
+  previewSwipeStartX = 0; previewSwipeStartY = 0;
   if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy) * 1.2) return;
   navigateMedia(dx < 0 ? 1 : -1);
 }, { passive: true });
