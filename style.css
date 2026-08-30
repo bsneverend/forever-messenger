@@ -772,3 +772,28 @@ body.media-modal-open { overflow: hidden; }
     touch-action: none;
   }
 }
+
+
+/* Keep preview controls in their original place; only lift the × glyph slightly. */
+.media-modal-toolbar { align-items: center; padding-top: 0; }
+.media-modal-toolbar > .media-modal-button,
+.media-modal-actions > .media-modal-button,
+.media-zoom-button { transform: none; }
+.media-modal-button:active { transform: scale(.96); }
+#media-close-button { padding: 0 0 4px; line-height: 1; }
+
+/* Pan zoomed images with mouse on desktop and one finger on touch devices. */
+.media-modal-content { cursor: default; }
+.media-modal-content .media-preview-image {
+  transition: transform .04s linear;
+  cursor: grab;
+  touch-action: none;
+}
+.media-modal-content.is-dragging-media,
+.media-modal-content.is-dragging-media .media-preview-image { cursor: grabbing; }
+
+@media (max-width: 760px) {
+  .media-modal-toolbar > .media-modal-button,
+  .media-modal-actions > .media-modal-button { transform: none; }
+  #media-close-button { padding-bottom: 4px; }
+}
