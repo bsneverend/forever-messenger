@@ -1,4 +1,4 @@
-const CACHE_NAME = "forever-shell-v3";
+const CACHE_NAME = "forever-shell-v4";
 
 const APP_SHELL = [
   "./",
@@ -7,8 +7,7 @@ const APP_SHELL = [
   "./app.js",
   "./manifest.json",
   "./assets/icon-192.png",
-  "./assets/icon-512.png",
-  "./assets/apple-touch-icon.png"
+  "./assets/icon-192.png"
 ];
 
 self.addEventListener("install", (event) => {
