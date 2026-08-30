@@ -144,16 +144,38 @@ async function hydrateMessageMedia() {
     el.src = data.signedUrl; el.dataset.resolved = "true";
   }));
 }
+function getPreviewableMedia() {
+  return state.messages.filter((message) => Boolean(message.image_url));
+}
+
+function updateMediaNavigation() {
+  const items = getPreviewableMedia();
+  const index = activePreviewMedia?.index ?? -1;
+  const hasMultiple = items.length > 1;
+
+  mediaPrevButton.classList.toggle("hidden", !hasMultiple);
+  mediaNextButton.classList.toggle("hidden", !hasMultiple);
+  mediaPrevButton.disabled = !hasMultiple || index <= 0;
+  mediaNextButton.disabled = !hasMultiple || index < 0 || index >= items.length - 1;
+}
+
 async function openMediaPreview(path) {
-  const { data, error } = await db.storage.from("forever-media").createSignedUrl(path, 60 * 60);
-  if (error || !data?.signedUrl) return alert("Forever could not open this media.");
+  const items = getPreviewableMedia();
+  const index = items.findIndex((message) => message.image_url === path);
+  if (index < 0) return;
 
-  const video = isVideoPath(path);
-  activePreviewMedia = { path, url: data.signedUrl, video };
+  activePreviewMedia = { path, index, url: null, video: isVideoPath(path) };
+  mediaModal.classList.remove("hidden");
+  document.body.classList.add("media-modal-open");
+  await renderActivePreview();
+}
 
-  // Build the preview with DOM APIs instead of injecting a signed URL into HTML.
-  // This is more reliable on desktop browsers, especially for Supabase URLs with
-  // long query strings, and keeps the preview behavior identical to inline media.
+async function renderActivePreview() {
+  if (!activePreviewMedia) return;
+
+  const { path, video } = activePreviewMedia;
+  const requestPath = path;
+  updateMediaNavigation();
   mediaModalContent.replaceChildren();
 
   const media = document.createElement(video ? "video" : "img");
@@ -169,45 +191,132 @@ async function openMediaPreview(path) {
     media.decoding = "async";
   }
 
-  // Open the modal before assigning src so the browser can calculate the
-  // available desktop viewport correctly when the media loads.
-  mediaModal.classList.remove("hidden");
-  document.body.classList.add("media-modal-open");
   mediaModalContent.appendChild(media);
 
+  const { data, error } = await db.storage.from("forever-media").createSignedUrl(path, 60 * 60);
+  if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
+
+  if (error || !data?.signedUrl) {
+    console.warn("Forever could not open this media.", error);
+    alert("Forever could not open this media.");
+    closeMediaPreview();
+    return;
+  }
+
+  activePreviewMedia.url = data.signedUrl;
   media.src = data.signedUrl;
 
   if (!video) {
-    media.addEventListener("load", () => {
-      media.classList.add("is-loaded");
-    }, { once: true });
-
     media.addEventListener("error", () => {
-      console.warn("Forever could not render this image preview.", path);
+      if (activePreviewMedia?.path !== requestPath) return;
+      console.warn("Forever could not render this image preview.", requestPath);
       alert("Forever could not display this image preview in this browser.");
       closeMediaPreview();
     }, { once: true });
   }
 }
-function closeMediaPreview() {
-  mediaModal.classList.add("hidden"); mediaModalContent.innerHTML = ""; activePreviewMedia = null; document.body.classList.remove("media-modal-open");
+
+function navigateMedia(direction) {
+  const items = getPreviewableMedia();
+  if (!activePreviewMedia || items.length < 2) return;
+
+  const nextIndex = activePreviewMedia.index + direction;
+  if (nextIndex < 0 || nextIndex >= items.length) return;
+
+  const next = items[nextIndex];
+  activePreviewMedia = {
+    path: next.image_url,
+    index: nextIndex,
+    url: null,
+    video: isVideoPath(next.image_url)
+  };
+
+  renderActivePreview();
 }
+
+function closeMediaPreview() {
+  mediaModal.classList.add("hidden");
+  mediaModalContent.replaceChildren();
+  activePreviewMedia = null;
+  document.body.classList.remove("media-modal-open");
+}
+
 async function shareActiveMedia() {
   if (!activePreviewMedia) return;
-  const { url, path, video } = activePreviewMedia, name = path.split("/").pop() || (video ? "forever-video.mp4" : "forever-photo.jpg");
+  const { url, path, video } = activePreviewMedia;
+  const name = path.split("/").pop() || (video ? "forever-video.mp4" : "forever-photo.jpg");
+
   try {
-    const response = await fetch(url), blob = await response.blob(), file = new File([blob], name, { type: blob.type || (video ? "video/mp4" : "image/jpeg") });
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Forever" }); return; }
-    const link = document.createElement("a"); link.href = url; link.download = name; link.rel = "noopener"; document.body.appendChild(link); link.click(); link.remove();
-  } catch { window.open(url, "_blank", "noopener"); }
+    const shareUrl = url || (await db.storage.from("forever-media").createSignedUrl(path, 60 * 60)).data?.signedUrl;
+    if (!shareUrl) throw new Error("Media URL unavailable");
+
+    const response = await fetch(shareUrl);
+    const blob = await response.blob();
+    const file = new File([blob], name, {
+      type: blob.type || (video ? "video/mp4" : "image/jpeg")
+    });
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "Forever" });
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = shareUrl;
+    link.download = name;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } catch {
+    if (activePreviewMedia?.url) window.open(activePreviewMedia.url, "_blank", "noopener");
+  }
 }
+
 messagesEl.addEventListener("click", (event) => {
-  const media = event.target.closest("[data-media-path]"); if (!media) return; event.preventDefault(); openMediaPreview(media.dataset.mediaPath);
+  const media = event.target.closest("[data-media-path]");
+  if (!media) return;
+  event.preventDefault();
+  openMediaPreview(media.dataset.mediaPath);
 });
+
 mediaCloseButton.addEventListener("click", closeMediaPreview);
 mediaShareButton.addEventListener("click", shareActiveMedia);
-mediaModal.addEventListener("click", (event) => { if (event.target.closest("[data-close-media-modal]")) closeMediaPreview(); });
-document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !mediaModal.classList.contains("hidden")) closeMediaPreview(); });
+mediaPrevButton.addEventListener("click", () => navigateMedia(-1));
+mediaNextButton.addEventListener("click", () => navigateMedia(1));
+
+mediaModal.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-media-modal]")) closeMediaPreview();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (mediaModal.classList.contains("hidden")) return;
+  if (event.key === "Escape") closeMediaPreview();
+  if (event.key === "ArrowLeft") navigateMedia(-1);
+  if (event.key === "ArrowRight") navigateMedia(1);
+});
+
+let previewSwipeStartX = 0;
+let previewSwipeStartY = 0;
+mediaModalContent.addEventListener("touchstart", (event) => {
+  if (!activePreviewMedia || event.touches.length !== 1) return;
+  previewSwipeStartX = event.touches[0].clientX;
+  previewSwipeStartY = event.touches[0].clientY;
+}, { passive: true });
+
+mediaModalContent.addEventListener("touchend", (event) => {
+  if (!activePreviewMedia || !previewSwipeStartX || event.changedTouches.length !== 1) return;
+
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - previewSwipeStartX;
+  const dy = touch.clientY - previewSwipeStartY;
+
+  previewSwipeStartX = 0;
+  previewSwipeStartY = 0;
+
+  if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy) * 1.2) return;
+  navigateMedia(dx < 0 ? 1 : -1);
+}, { passive: true });
 
 async function loadProfileAndConversation() {
   const { data: profile, error: profileError } = await db
