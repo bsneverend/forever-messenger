@@ -374,30 +374,30 @@ async function renderActivePreview() {
   const { path, video } = activePreviewMedia;
   const requestPath = path;
 
-  // Put the previously previewed node back before navigating to another item.
+  // Always restore any previously moved media before opening the next item.
   restoreActivePreviewSource();
   mediaModalContent.replaceChildren();
   updateMediaNavigation();
 
-  // First choice for photos: the chat thumbnail is already successfully decoded.
-  // Rasterize those exact decoded pixels into a browser-native PNG and preview
-  // that PNG. This avoids moving the original <img> and avoids asking Firefox/
-  // Chromium to decode the original iPhone image a second time.
-  if (!video) {
-    const existing = findLoadedMessageMedia(requestPath);
-    const snapshotUrl = await getRenderedPreviewUrl(requestPath, existing);
-    if (snapshotUrl && activePreviewMedia?.path === requestPath) {
-      const previewImage = document.createElement("img");
-      previewImage.className = "media-preview-image";
-      previewImage.alt = "Media preview";
-      previewImage.decoding = "sync";
-      previewImage.src = snapshotUrl;
-      mediaModalContent.replaceChildren(previewImage);
-      activePreviewMedia.url = snapshotUrl;
-      return;
+  // FIRST: reuse the exact media element that is already rendered in the chat.
+  // This is the most reliable path for iPhone-originated portrait screenshots:
+  // the browser does not have to decode the file a second time and does not need
+  // a canvas snapshot. It simply enlarges the already-decoded element.
+  const mounted = mountAlreadyRenderedMedia(requestPath, video);
+  if (mounted && activePreviewMedia?.path === requestPath) {
+    activePreviewMedia.url = mounted.currentSrc || mounted.src || null;
+
+    if (video) {
+      mounted.controls = true;
+      mounted.autoplay = true;
+      mounted.playsInline = true;
     }
+
+    return;
   }
 
+  // SECOND: create a fresh preview element only when the chat element is not
+  // available (for example, a lazy item that has not entered the viewport yet).
   const media = document.createElement(video ? "video" : "img");
   media.className = video ? "media-preview-video" : "media-preview-image";
 
@@ -411,12 +411,14 @@ async function renderActivePreview() {
     media.decoding = "async";
   }
 
-  mediaModalContent.appendChild(media);
+  mediaModalContent.replaceChildren(media);
 
   if (!video) {
     media.addEventListener("error", async () => {
       if (activePreviewMedia?.path !== requestPath) return;
 
+      // Last-resort compatibility conversion for files whose real bytes are
+      // HEIC/HEIF even when their filename extension is misleading.
       if (media.dataset.heicFallback !== "true") {
         media.dataset.heicFallback = "true";
         try {
@@ -434,7 +436,7 @@ async function renderActivePreview() {
       console.warn("Forever could not render this image preview.", requestPath);
       alert("Forever could not display this image preview in this browser.");
       closeMediaPreview();
-    });
+    }, { once: false });
   }
 
   try {
@@ -442,22 +444,6 @@ async function renderActivePreview() {
     if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
 
     activePreviewMedia.url = signedOrCompatibleUrl;
-
-    // Decode before showing the fallback-created node. This avoids a blank first
-    // paint when a large phone image is decoded asynchronously.
-    if (!video) {
-      const preload = new Image();
-      preload.decoding = "async";
-      preload.src = signedOrCompatibleUrl;
-      try {
-        await preload.decode();
-      } catch (_) {
-        // The onerror handler on the visible image below will run the HEIC path.
-      }
-
-      if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
-    }
-
     media.src = signedOrCompatibleUrl;
   } catch (error) {
     console.warn("Forever could not open this media.", error);
