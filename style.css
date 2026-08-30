@@ -99,6 +99,14 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px
   justify-content: space-between; border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 11px; font-size: 21px; font-weight: 800; letter-spacing: -.4px; }
+.brand-app-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: block;
+  border-radius: 10px;
+  object-fit: cover;
+}
 .brand-mark.small { width: 34px; height: 34px; border-radius: 11px; font-size: 16px; box-shadow: none; }
 .icon-button, .back-button {
   width: 38px; height: 38px; display: grid; place-items: center;
