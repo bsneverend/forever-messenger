@@ -116,13 +116,14 @@
       </div>
 
       <form id="composer" class="composer">
-        <input id="image-input" class="image-input" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" />
+        <input id="image-input" class="image-input" type="file" accept="image/*,video/*,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.mp4,.mov,.m4v,.webm" />
         <label id="add-image-button" for="image-input" class="add-image-button" aria-label="Add image" title="Add image">
           <span aria-hidden="true">+</span>
         </label>
         <div id="image-preview-wrap" class="image-preview-wrap hidden">
-          <img id="image-preview" alt="Selected image preview" />
-          <button id="remove-image-button" type="button" aria-label="Remove image">×</button>
+          <img id="image-preview" alt="Selected media preview" />
+          <video id="video-preview" class="hidden" muted playsinline></video>
+          <button id="remove-image-button" type="button" aria-label="Remove selected media">×</button>
         </div>
         <textarea id="message-input" rows="1" maxlength="4000" placeholder="Write a message..." aria-label="Write a message"></textarea>
         <button id="send-button" type="submit" class="send-button" aria-label="Send message">
@@ -134,6 +135,21 @@
       </form>
     </section>
   </main>
+
+  <div id="media-modal" class="media-modal hidden" role="dialog" aria-modal="true" aria-label="Media preview">
+    <div class="media-modal-backdrop" data-close-media-modal></div>
+    <section class="media-modal-card">
+      <div class="media-modal-toolbar">
+        <button id="media-close-button" class="media-modal-button" type="button" aria-label="Close preview">×</button>
+        <div class="media-modal-actions">
+          <button id="media-share-button" class="media-modal-button" type="button" aria-label="Share or save media" title="Share or save">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path></svg>
+          </button>
+        </div>
+      </div>
+      <div id="media-modal-content" class="media-modal-content"></div>
+    </section>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
