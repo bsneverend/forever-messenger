@@ -40,9 +40,15 @@ const mediaModal = $("media-modal");
 const mediaModalContent = $("media-modal-content");
 const mediaCloseButton = $("media-close-button");
 const mediaShareButton = $("media-share-button");
+const mediaZoomActions = $("media-zoom-actions");
+const mediaZoomOutButton = $("media-zoom-out-button");
+const mediaZoomInButton = $("media-zoom-in-button");
 const mediaPrevButton = $("media-prev-button");
 const mediaNextButton = $("media-next-button");
 let activePreviewMedia = null;
+let previewZoom = 1;
+let previewPinchDistance = 0;
+let previewPinchZoom = 1;
 
 function initials(name) {
   return (name || "?")
@@ -170,6 +176,44 @@ function getPreviewableMedia() {
   return state.messages.filter((message) => Boolean(message.image_url));
 }
 
+function getActivePreviewElement() {
+  return mediaModalContent.querySelector(".media-preview-image");
+}
+
+function resetPreviewZoom() {
+  previewZoom = 1;
+  previewPinchDistance = 0;
+  previewPinchZoom = 1;
+  const media = getActivePreviewElement();
+  if (media) {
+    media.style.transform = "";
+    media.style.transformOrigin = "";
+  }
+  updatePreviewZoomControls();
+}
+
+function updatePreviewZoomControls() {
+  const imagePreview = Boolean(activePreviewMedia && !activePreviewMedia.video);
+  if (mediaZoomActions) mediaZoomActions.classList.toggle("hidden", !imagePreview);
+  if (mediaZoomOutButton) mediaZoomOutButton.disabled = !imagePreview || previewZoom <= 1;
+  if (mediaZoomInButton) mediaZoomInButton.disabled = !imagePreview || previewZoom >= 4;
+}
+
+function setPreviewZoom(value, originX = 50, originY = 50) {
+  if (!activePreviewMedia || activePreviewMedia.video) return;
+  previewZoom = Math.min(4, Math.max(1, value));
+  const media = getActivePreviewElement();
+  if (media) {
+    media.style.transformOrigin = `${originX}% ${originY}%`;
+    media.style.transform = previewZoom === 1 ? "" : `scale(${previewZoom})`;
+  }
+  updatePreviewZoomControls();
+}
+
+function zoomPreviewBy(delta) {
+  setPreviewZoom(previewZoom + delta);
+}
+
 function updateMediaNavigation() {
   const items = getPreviewableMedia();
   const index = activePreviewMedia?.index ?? -1;
@@ -194,6 +238,8 @@ function restoreActivePreviewSource() {
 
   const { element, parent, nextSibling, className } = activePreviewSource;
   element.className = className;
+  element.style.transform = "";
+  element.style.transformOrigin = "";
 
   if (parent && parent.isConnected) {
     if (nextSibling && nextSibling.parentNode === parent) {
@@ -233,6 +279,7 @@ async function openMediaPreview(path) {
   if (index < 0) return;
 
   activePreviewMedia = { path, index, url: null, video: isVideoPath(path) };
+  previewZoom = 1;
   mediaModal.classList.remove("hidden");
   document.body.classList.add("media-modal-open");
   await renderActivePreview();
@@ -247,7 +294,9 @@ async function renderActivePreview() {
   // Always restore any previously moved media before opening the next item.
   restoreActivePreviewSource();
   mediaModalContent.replaceChildren();
+  previewZoom = 1;
   updateMediaNavigation();
+  updatePreviewZoomControls();
 
   // FIRST: reuse the exact media element that is already rendered in the chat.
   // This is the most reliable path for iPhone-originated portrait screenshots:
@@ -263,6 +312,7 @@ async function renderActivePreview() {
       mounted.playsInline = true;
     }
 
+    updatePreviewZoomControls();
     return;
   }
 
@@ -282,6 +332,7 @@ async function renderActivePreview() {
   }
 
   mediaModalContent.replaceChildren(media);
+  updatePreviewZoomControls();
 
   if (!video) {
     media.addEventListener("error", () => {
@@ -324,6 +375,7 @@ function navigateMedia(direction) {
 }
 
 function closeMediaPreview() {
+  resetPreviewZoom();
   restoreActivePreviewSource();
   mediaModal.classList.add("hidden");
   mediaModalContent.replaceChildren();
@@ -372,6 +424,8 @@ messagesEl.addEventListener("click", (event) => {
 
 mediaCloseButton.addEventListener("click", closeMediaPreview);
 mediaShareButton.addEventListener("click", shareActiveMedia);
+mediaZoomOutButton.addEventListener("click", () => zoomPreviewBy(-0.25));
+mediaZoomInButton.addEventListener("click", () => zoomPreviewBy(0.25));
 mediaPrevButton.addEventListener("click", () => navigateMedia(-1));
 mediaNextButton.addEventListener("click", () => navigateMedia(1));
 
@@ -384,18 +438,68 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeMediaPreview();
   if (event.key === "ArrowLeft") navigateMedia(-1);
   if (event.key === "ArrowRight") navigateMedia(1);
+  if (event.key === "+" || event.key === "=") zoomPreviewBy(0.25);
+  if (event.key === "-" || event.key === "_") zoomPreviewBy(-0.25);
 });
 
 let previewSwipeStartX = 0;
 let previewSwipeStartY = 0;
+let previewPinching = false;
+
+function getTouchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
 mediaModalContent.addEventListener("touchstart", (event) => {
-  if (!activePreviewMedia || event.touches.length !== 1) return;
+  if (!activePreviewMedia) return;
+
+  if (event.touches.length === 2 && !activePreviewMedia.video) {
+    previewPinching = true;
+    previewPinchDistance = getTouchDistance(event.touches);
+    previewPinchZoom = previewZoom;
+    previewSwipeStartX = 0;
+    previewSwipeStartY = 0;
+    return;
+  }
+
+  if (event.touches.length !== 1) return;
+  previewPinching = false;
   previewSwipeStartX = event.touches[0].clientX;
   previewSwipeStartY = event.touches[0].clientY;
 }, { passive: true });
 
+mediaModalContent.addEventListener("touchmove", (event) => {
+  if (!previewPinching || event.touches.length !== 2 || !activePreviewMedia || activePreviewMedia.video) return;
+  event.preventDefault();
+
+  const distance = getTouchDistance(event.touches);
+  if (!previewPinchDistance) return;
+  const midpointX = (event.touches[0].clientX + event.touches[1].clientX) / 2;
+  const midpointY = (event.touches[0].clientY + event.touches[1].clientY) / 2;
+  const rect = mediaModalContent.getBoundingClientRect();
+  const originX = Math.min(100, Math.max(0, ((midpointX - rect.left) / rect.width) * 100));
+  const originY = Math.min(100, Math.max(0, ((midpointY - rect.top) / rect.height) * 100));
+
+  setPreviewZoom(previewPinchZoom * (distance / previewPinchDistance), originX, originY);
+}, { passive: false });
+
 mediaModalContent.addEventListener("touchend", (event) => {
-  if (!activePreviewMedia || !previewSwipeStartX || event.changedTouches.length !== 1) return;
+  if (!activePreviewMedia) return;
+
+  if (previewPinching) {
+    if (event.touches.length < 2) previewPinching = false;
+    previewSwipeStartX = 0;
+    previewSwipeStartY = 0;
+    return;
+  }
+
+  if (!previewSwipeStartX || event.changedTouches.length !== 1 || previewZoom > 1) {
+    previewSwipeStartX = 0;
+    previewSwipeStartY = 0;
+    return;
+  }
 
   const touch = event.changedTouches[0];
   const dx = touch.clientX - previewSwipeStartX;
