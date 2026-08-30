@@ -266,3 +266,60 @@ textarea {
   opacity: .45;
   cursor: not-allowed;
 }
+
+
+/* Desktop app frame: lock the Forever shell to the viewport.
+   Only the contact list and the message area are independently scrollable. */
+@media (min-width: 761px) {
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .messenger {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .conversation-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .sidebar-footer {
+    flex: 0 0 auto;
+  }
+
+  .chat-panel {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .chat-header,
+  .composer {
+    flex: 0 0 auto;
+  }
+
+  .message-scroll {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+}
