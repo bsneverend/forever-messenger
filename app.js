@@ -145,7 +145,7 @@ async function convertHeicBlobToJpeg(blob, sourceName = "photo.heic") {
   });
 }
 
-async function resolveMediaUrl(path) {
+async function getSignedMediaUrl(path) {
   const { data, error } = await db.storage
     .from("forever-media")
     .createSignedUrl(path, 60 * 60);
@@ -154,21 +154,54 @@ async function resolveMediaUrl(path) {
     throw error || new Error("Media URL unavailable");
   }
 
-  // Windows/Chrome cannot reliably render HEIC, while iPhone Safari can.
-  // Convert HEIC/HEIF to a temporary JPEG object URL for consistent previews.
-  if (isHeicPath(path)) {
-    if (heicPreviewUrlCache.has(path)) return heicPreviewUrlCache.get(path);
+  return data.signedUrl;
+}
 
-    const response = await fetch(data.signedUrl);
-    if (!response.ok) throw new Error("Unable to download HEIC image.");
-    const sourceBlob = await response.blob();
-    const jpegFile = await convertHeicBlobToJpeg(sourceBlob, path.split("/").pop() || "photo.heic");
-    const objectUrl = URL.createObjectURL(jpegFile);
-    heicPreviewUrlCache.set(path, objectUrl);
-    return objectUrl;
+async function blobLooksLikeHeic(blob) {
+  const type = String(blob?.type || "").toLowerCase();
+  if (type.includes("heic") || type.includes("heif")) return true;
+
+  // Some iPhone uploads arrive with an incorrect/empty MIME type or extension.
+  // HEIC/HEIF files are ISO BMFF containers and usually identify themselves near byte 4.
+  const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+  const ascii = String.fromCharCode(...bytes);
+  return /ftyp(?:heic|heix|hevc|hevx|mif1|msf1)/i.test(ascii);
+}
+
+async function getCompatibleHeicUrl(path, signedUrl) {
+  if (heicPreviewUrlCache.has(path)) return heicPreviewUrlCache.get(path);
+
+  const response = await fetch(signedUrl);
+  if (!response.ok) throw new Error("Unable to download image.");
+
+  const sourceBlob = await response.blob();
+  if (!(await blobLooksLikeHeic(sourceBlob))) {
+    throw new Error("The image is not HEIC/HEIF.");
   }
 
-  return data.signedUrl;
+  const jpegFile = await convertHeicBlobToJpeg(
+    sourceBlob,
+    path.split("/").pop() || "photo.heic"
+  );
+  const objectUrl = URL.createObjectURL(jpegFile);
+  heicPreviewUrlCache.set(path, objectUrl);
+  return objectUrl;
+}
+
+async function resolveMediaUrl(path) {
+  const signedUrl = await getSignedMediaUrl(path);
+
+  // Known HEIC/HEIF paths are converted before assigning to <img>.
+  if (isHeicPath(path)) {
+    return getCompatibleHeicUrl(path, signedUrl);
+  }
+
+  return signedUrl;
+}
+
+async function resolveImageFallbackUrl(path) {
+  const signedUrl = await getSignedMediaUrl(path);
+  return getCompatibleHeicUrl(path, signedUrl);
 }
 
 function renderMessages() {
@@ -201,7 +234,26 @@ async function hydrateMessageMedia() {
     if (!path || el.dataset.resolved === "true") return;
 
     try {
-      el.src = await resolveMediaUrl(path);
+      const resolvedUrl = await resolveMediaUrl(path);
+
+      // Attach the fallback before assigning src. This is important for images
+      // that fail immediately from browser cache/unsupported codecs.
+      if (el.tagName === "IMG") {
+        el.addEventListener("error", async () => {
+          if (el.dataset.heicFallback === "true") return;
+          el.dataset.heicFallback = "true";
+
+          try {
+            el.src = await resolveImageFallbackUrl(path);
+            el.dataset.resolved = "true";
+          } catch (fallbackError) {
+            console.warn("Unable to render shared image:", fallbackError);
+            el.dataset.mediaError = "true";
+          }
+        }, { once: true });
+      }
+
+      el.src = resolvedUrl;
       el.dataset.resolved = "true";
     } catch (error) {
       console.warn("Unable to load shared media:", error);
@@ -258,6 +310,32 @@ async function renderActivePreview() {
 
   mediaModalContent.appendChild(media);
 
+  if (!video) {
+    media.addEventListener("error", async () => {
+      if (activePreviewMedia?.path !== requestPath) return;
+
+      // Some iPhone images have a JPG/empty extension but still contain HEIC data.
+      // If native browser rendering fails, inspect and convert the actual file.
+      if (media.dataset.heicFallback !== "true") {
+        media.dataset.heicFallback = "true";
+        try {
+          const fallbackUrl = await resolveImageFallbackUrl(requestPath);
+          if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
+          activePreviewMedia.url = fallbackUrl;
+          media.src = fallbackUrl;
+          return;
+        } catch (fallbackError) {
+          console.warn("Forever HEIC fallback failed.", fallbackError);
+        }
+      }
+
+      if (activePreviewMedia?.path !== requestPath) return;
+      console.warn("Forever could not render this image preview.", requestPath);
+      alert("Forever could not display this image preview in this browser.");
+      closeMediaPreview();
+    });
+  }
+
   try {
     const resolvedUrl = await resolveMediaUrl(path);
     if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
@@ -269,15 +347,6 @@ async function renderActivePreview() {
     alert("Forever could not open this media in this browser.");
     closeMediaPreview();
     return;
-  }
-
-  if (!video) {
-    media.addEventListener("error", () => {
-      if (activePreviewMedia?.path !== requestPath) return;
-      console.warn("Forever could not render this image preview.", requestPath);
-      alert("Forever could not display this image preview in this browser.");
-      closeMediaPreview();
-    }, { once: true });
   }
 }
 
