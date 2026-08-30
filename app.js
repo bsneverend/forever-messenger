@@ -125,6 +125,7 @@ function isHeicFile(file) {
 }
 
 const heicPreviewUrlCache = new Map();
+const previewSnapshotUrlCache = new Map();
 
 async function convertHeicBlobToJpeg(blob, sourceName = "photo.heic") {
   if (typeof window.heic2any !== "function") {
@@ -166,6 +167,40 @@ async function blobLooksLikeHeic(blob) {
   const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
   const ascii = String.fromCharCode(...bytes);
   return /ftyp(?:heic|heix|hevc|hevx|mif1|msf1)/i.test(ascii);
+}
+
+async function getRenderedPreviewUrl(path, sourceImage) {
+  if (!sourceImage || !sourceImage.complete || !sourceImage.naturalWidth || !sourceImage.naturalHeight) {
+    return "";
+  }
+
+  if (previewSnapshotUrlCache.has(path)) {
+    return previewSnapshotUrlCache.get(path);
+  }
+
+  try {
+    // The chat thumbnail is already decoded successfully. Rasterize those exact
+    // pixels into a fresh browser-native PNG for the modal. This avoids a second
+    // HEIC/HEIF decode or Chromium re-decode of the original resource.
+    const canvas = document.createElement("canvas");
+    canvas.width = sourceImage.naturalWidth;
+    canvas.height = sourceImage.naturalHeight;
+
+    const context = canvas.getContext("2d", { alpha: false });
+    context.drawImage(sourceImage, 0, 0);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return "";
+
+    const url = URL.createObjectURL(blob);
+    previewSnapshotUrlCache.set(path, url);
+    return url;
+  } catch (error) {
+    // Some remote images may be canvas-tainted; normal source loading below
+    // remains the fallback for those.
+    console.warn("Forever could not snapshot rendered media for preview.", error);
+    return "";
+  }
 }
 
 async function getCompatibleHeicUrl(path, signedUrl) {
@@ -305,7 +340,7 @@ async function renderActivePreview() {
     media.preload = "metadata";
   } else {
     media.alt = "Media preview";
-    media.decoding = "async";
+    media.decoding = "sync";
   }
 
   mediaModalContent.appendChild(media);
@@ -344,15 +379,30 @@ async function renderActivePreview() {
       return el.dataset.mediaPath === requestPath && (el.currentSrc || el.src);
     });
 
+    const renderedSnapshotUrl = (!video && loadedMessageMedia instanceof HTMLImageElement)
+      ? await getRenderedPreviewUrl(requestPath, loadedMessageMedia)
+      : "";
+
     const alreadyWorkingUrl = loadedMessageMedia
       ? (loadedMessageMedia.currentSrc || loadedMessageMedia.src)
       : "";
 
-    const resolvedUrl = alreadyWorkingUrl || await resolveMediaUrl(path);
+    const resolvedUrl = renderedSnapshotUrl || alreadyWorkingUrl || await resolveMediaUrl(path);
     if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
 
     activePreviewMedia.url = resolvedUrl;
     media.src = resolvedUrl;
+
+    // Force the large desktop preview to complete decoding before the browser
+    // composites the modal. This prevents Chromium from leaving some large
+    // iPhone screenshots as a blank layer after an async re-decode.
+    if (!video && typeof media.decode === "function") {
+      try {
+        await media.decode();
+      } catch (_) {
+        // The normal error handler above performs the HEIC fallback when needed.
+      }
+    }
   } catch (error) {
     console.warn("Forever could not open this media.", error);
     alert("Forever could not open this media in this browser.");
