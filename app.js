@@ -10,7 +10,9 @@ const state = {
   contact: null,
   conversationId: null,
   subscription: null,
-  messages: []
+  messages: [],
+  pendingImage: null,
+  pendingImagePreviewUrl: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -28,6 +30,11 @@ const emptyState = $("empty-state");
 const messageInput = $("message-input");
 const composer = $("composer");
 const sendButton = $("send-button");
+const imageInput = $("image-input");
+const addImageButton = $("add-image-button");
+const imagePreviewWrap = $("image-preview-wrap");
+const imagePreview = $("image-preview");
+const removeImageButton = $("remove-image-button");
 
 function initials(name) {
   return (name || "?")
@@ -97,7 +104,6 @@ function renderIdentity() {
 
 function renderMessages() {
   messagesEl.innerHTML = "";
-
   emptyState.classList.toggle("hidden", state.messages.length !== 0);
 
   for (const message of state.messages) {
@@ -105,24 +111,30 @@ function renderMessages() {
     const row = document.createElement("div");
     row.className = `message-row ${mine ? "mine" : ""}`;
     row.dataset.messageId = message.id;
-    row.innerHTML = `
-      <div class="message-bubble">
-        <div class="message-text">${escapeHtml(message.content)}</div>
-        <div class="message-meta">${formatTime(message.created_at)}</div>
-      </div>
-    `;
+    const textHtml = message.content ? `<div class="message-text">${escapeHtml(message.content)}</div>` : "";
+    const imageHtml = message.image_url ? `<div class="message-image-wrap"><img class="message-image" data-image-path="${escapeHtml(message.image_url)}" alt="Shared image" loading="lazy" /></div>` : "";
+    row.innerHTML = `<div class="message-bubble ${message.image_url ? "has-image" : ""}">${imageHtml}${textHtml}<div class="message-meta">${formatTime(message.created_at)}</div></div>`;
     messagesEl.appendChild(row);
   }
 
   const last = state.messages[state.messages.length - 1];
-  $("last-message-preview").textContent = last
-    ? (last.sender_id === state.user.id ? `You: ${last.content}` : last.content)
-    : "No messages yet";
+  const preview = last ? (last.image_url ? (last.content ? `📷 ${last.content}` : "📷 Photo") : last.content) : "No messages yet";
+  $("last-message-preview").textContent = last ? (last.sender_id === state.user.id ? `You: ${preview}` : preview) : preview;
   $("last-message-time").textContent = last ? formatConversationTime(last.created_at) : "";
+  hydrateMessageImages();
+  requestAnimationFrame(() => { messageScroll.scrollTop = messageScroll.scrollHeight; });
+}
 
-  requestAnimationFrame(() => {
-    messageScroll.scrollTop = messageScroll.scrollHeight;
-  });
+async function hydrateMessageImages() {
+  const images = [...messagesEl.querySelectorAll(".message-image[data-image-path]")];
+  await Promise.all(images.map(async (img) => {
+    const path = img.dataset.imagePath;
+    if (!path || img.dataset.resolved === "true") return;
+    const { data, error } = await db.storage.from("forever-media").createSignedUrl(path, 60 * 60);
+    if (error) { console.warn("Unable to load shared image:", error); return; }
+    img.src = data.signedUrl;
+    img.dataset.resolved = "true";
+  }));
 }
 
 async function loadProfileAndConversation() {
@@ -170,7 +182,7 @@ async function loadProfileAndConversation() {
 async function loadMessages() {
   const { data, error } = await db
     .from("messages")
-    .select("id, conversation_id, sender_id, content, created_at")
+    .select("id, conversation_id, sender_id, content, image_url, created_at")
     .eq("conversation_id", state.conversationId)
     .order("created_at", { ascending: true });
 
@@ -245,6 +257,7 @@ $("logout-button").addEventListener("click", async () => {
   state.contact = null;
   state.conversationId = null;
   state.messages = [];
+  clearPendingImage();
   $("email").value = "";
   $("password").value = "";
   showLogin();
@@ -258,6 +271,53 @@ $("mobile-back-button").addEventListener("click", () => {
   messengerScreen.classList.remove("mobile-chat-open");
 });
 
+function clearPendingImage() {
+  state.pendingImage = null;
+  imageInput.value = "";
+  imagePreviewWrap.classList.add("hidden");
+  imagePreview.removeAttribute("src");
+  if (state.pendingImagePreviewUrl) {
+    URL.revokeObjectURL(state.pendingImagePreviewUrl);
+    state.pendingImagePreviewUrl = null;
+  }
+}
+
+addImageButton.addEventListener("click", () => imageInput.click());
+removeImageButton.addEventListener("click", clearPendingImage);
+
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    alert("Please choose an image file.");
+    clearPendingImage();
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert("Please choose an image smaller than 10 MB.");
+    clearPendingImage();
+    return;
+  }
+  if (state.pendingImagePreviewUrl) URL.revokeObjectURL(state.pendingImagePreviewUrl);
+  state.pendingImage = file;
+  state.pendingImagePreviewUrl = URL.createObjectURL(file);
+  imagePreview.src = state.pendingImagePreviewUrl;
+  imagePreviewWrap.classList.remove("hidden");
+});
+
+async function uploadPendingImage() {
+  if (!state.pendingImage) return null;
+  const file = state.pendingImage;
+  const extension = (file.name.split(".").pop() || "jpg").replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "jpg";
+  const path = `${state.user.id}/${state.conversationId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await db.storage.from("forever-media").upload(path, file, {
+    contentType: file.type || "image/jpeg",
+    upsert: false
+  });
+  if (error) throw error;
+  return path;
+}
+
 function autoResize() {
   messageInput.style.height = "auto";
   messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + "px";
@@ -267,35 +327,39 @@ messageInput.addEventListener("input", autoResize);
 composer.addEventListener("submit", async (event) => {
   event.preventDefault();
   const content = messageInput.value.trim();
-  if (!content || !state.user || !state.conversationId) return;
+  if ((!content && !state.pendingImage) || !state.user || !state.conversationId) return;
 
   sendButton.disabled = true;
+  addImageButton.disabled = true;
 
   try {
+    const imageUrl = await uploadPendingImage();
     const { data, error } = await db
       .from("messages")
       .insert({
         conversation_id: state.conversationId,
         sender_id: state.user.id,
-        content
+        content,
+        image_url: imageUrl
       })
-      .select("id, conversation_id, sender_id, content, created_at")
+      .select("id, conversation_id, sender_id, content, image_url, created_at")
       .single();
 
     if (error) throw error;
 
-    // Add immediately for a responsive sender experience.
     if (!state.messages.some((m) => m.id === data.id)) {
       state.messages.push(data);
       renderMessages();
     }
 
     messageInput.value = "";
+    clearPendingImage();
     autoResize();
   } catch (error) {
     alert(error.message || "Message could not be sent.");
   } finally {
     sendButton.disabled = false;
+    addImageButton.disabled = false;
     messageInput.focus();
   }
 });
