@@ -724,8 +724,16 @@ async function handleSelectedMedia() {
 
   let file = selectedFile;
   try {
-    // Convert HEIC/HEIF before upload so every future device receives JPEG.
-    if (isHeicFile(selectedFile)) {
+    // Do not trust the extension or MIME type from iPhone. Some iOS pickers can
+    // expose HEIC bytes while reporting image/jpeg or giving a non-HEIC name.
+    // Inspect the actual file header and normalize every HEIC/HEIF upload to JPEG
+    // BEFORE it ever reaches Supabase. This is the most reliable cross-browser
+    // solution because desktop preview never has to decode HEIC.
+    const shouldNormalizeHeic = !isVideoFile(selectedFile) && (
+      isHeicFile(selectedFile) || await blobLooksLikeHeic(selectedFile)
+    );
+
+    if (shouldNormalizeHeic) {
       file = await convertHeicBlobToJpeg(selectedFile, selectedFile.name || "photo.heic");
     }
   } catch (error) {
