@@ -797,3 +797,13 @@ body.media-modal-open { overflow: hidden; }
   .media-modal-actions > .media-modal-button { transform: none; }
   #media-close-button { padding-bottom: 4px; }
 }
+
+
+/* Preview pan reliability: the media itself must receive pointer/touch input. */
+.media-modal-content .media-preview-image {
+  pointer-events: auto;
+  will-change: transform;
+}
+.media-modal-content.is-dragging-media {
+  user-select: none;
+}
