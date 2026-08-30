@@ -276,33 +276,53 @@ function clearPendingImage() {
   imageInput.value = "";
   imagePreviewWrap.classList.add("hidden");
   imagePreview.removeAttribute("src");
-  if (state.pendingImagePreviewUrl) {
-    URL.revokeObjectURL(state.pendingImagePreviewUrl);
-    state.pendingImagePreviewUrl = null;
-  }
+  state.pendingImagePreviewUrl = null;
 }
 
 removeImageButton.addEventListener("click", clearPendingImage);
 
-imageInput.addEventListener("change", () => {
-  const file = imageInput.files?.[0];
+function isLikelyImageFile(file) {
+  if (!file) return false;
+  if (file.type && file.type.startsWith("image/")) return true;
+  // iPhone Safari can occasionally provide an empty MIME type for photos.
+  return /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name || "");
+}
+
+function handleSelectedImage() {
+  const file = imageInput.files && imageInput.files[0];
   if (!file) return;
-  if (!file.type.startsWith("image/")) {
+
+  if (!isLikelyImageFile(file)) {
     alert("Please choose an image file.");
     clearPendingImage();
     return;
   }
-  if (file.size > 10 * 1024 * 1024) {
-    alert("Please choose an image smaller than 10 MB.");
+
+  if (file.size > 15 * 1024 * 1024) {
+    alert("Please choose an image smaller than 15 MB.");
     clearPendingImage();
     return;
   }
-  if (state.pendingImagePreviewUrl) URL.revokeObjectURL(state.pendingImagePreviewUrl);
+
   state.pendingImage = file;
-  state.pendingImagePreviewUrl = URL.createObjectURL(file);
-  imagePreview.src = state.pendingImagePreviewUrl;
-  imagePreviewWrap.classList.remove("hidden");
-});
+
+  // FileReader is more reliable than object URLs for the regular iPhone Safari web page.
+  const reader = new FileReader();
+  reader.onerror = () => {
+    alert("Forever could not read this photo. Please try another image.");
+    clearPendingImage();
+  };
+  reader.onload = () => {
+    if (state.pendingImage !== file) return;
+    state.pendingImagePreviewUrl = String(reader.result || "");
+    imagePreview.src = state.pendingImagePreviewUrl;
+    imagePreviewWrap.classList.remove("hidden");
+  };
+  reader.readAsDataURL(file);
+}
+
+imageInput.addEventListener("change", handleSelectedImage);
+imageInput.addEventListener("input", handleSelectedImage);
 
 async function uploadPendingImage() {
   if (!state.pendingImage) return null;
@@ -329,7 +349,7 @@ composer.addEventListener("submit", async (event) => {
   if ((!content && !state.pendingImage) || !state.user || !state.conversationId) return;
 
   sendButton.disabled = true;
-  addImageButton.disabled = true;
+  addImageButton.classList.add("is-disabled");
 
   try {
     const imageUrl = await uploadPendingImage();
