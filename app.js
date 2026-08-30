@@ -379,21 +379,23 @@ async function renderActivePreview() {
   mediaModalContent.replaceChildren();
   updateMediaNavigation();
 
-  // First choice: move the exact media element that is already rendered inside
-  // the conversation into the modal. No second request, no second HEIC decode,
-  // and no canvas re-rasterization. This is intentionally used before every
-  // other preview strategy and fixes the Firefox blank-preview path.
-  const existing = mountAlreadyRenderedMedia(requestPath, video);
-  if (existing) {
-    if (video) {
-      existing.controls = true;
-      existing.playsInline = true;
-      existing.autoplay = true;
-      existing.play?.().catch(() => {});
+  // First choice for photos: the chat thumbnail is already successfully decoded.
+  // Rasterize those exact decoded pixels into a browser-native PNG and preview
+  // that PNG. This avoids moving the original <img> and avoids asking Firefox/
+  // Chromium to decode the original iPhone image a second time.
+  if (!video) {
+    const existing = findLoadedMessageMedia(requestPath);
+    const snapshotUrl = await getRenderedPreviewUrl(requestPath, existing);
+    if (snapshotUrl && activePreviewMedia?.path === requestPath) {
+      const previewImage = document.createElement("img");
+      previewImage.className = "media-preview-image";
+      previewImage.alt = "Media preview";
+      previewImage.decoding = "sync";
+      previewImage.src = snapshotUrl;
+      mediaModalContent.replaceChildren(previewImage);
+      activePreviewMedia.url = snapshotUrl;
+      return;
     }
-
-    activePreviewMedia.url = existing.currentSrc || existing.src || null;
-    return;
   }
 
   const media = document.createElement(video ? "video" : "img");
