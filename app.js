@@ -113,6 +113,64 @@ function renderIdentity() {
 function isVideoPath(path = "") {
   return /\.(mp4|mov|m4v|webm|ogg|ogv)$/i.test(String(path).split("?")[0]);
 }
+
+function isHeicPath(path = "") {
+  return /\.(heic|heif)$/i.test(String(path).split("?")[0]);
+}
+
+function isHeicFile(file) {
+  if (!file) return false;
+  return /^(image\/heic|image\/heif)$/i.test(String(file.type || "")) ||
+    /\.(heic|heif)$/i.test(String(file.name || ""));
+}
+
+const heicPreviewUrlCache = new Map();
+
+async function convertHeicBlobToJpeg(blob, sourceName = "photo.heic") {
+  if (typeof window.heic2any !== "function") {
+    throw new Error("HEIC converter is not available yet.");
+  }
+
+  const converted = await window.heic2any({
+    blob,
+    toType: "image/jpeg",
+    quality: 0.92
+  });
+
+  const jpegBlob = Array.isArray(converted) ? converted[0] : converted;
+  const safeName = String(sourceName).replace(/\.(heic|heif)$/i, "") || "photo";
+  return new File([jpegBlob], safeName + ".jpg", {
+    type: "image/jpeg",
+    lastModified: Date.now()
+  });
+}
+
+async function resolveMediaUrl(path) {
+  const { data, error } = await db.storage
+    .from("forever-media")
+    .createSignedUrl(path, 60 * 60);
+
+  if (error || !data?.signedUrl) {
+    throw error || new Error("Media URL unavailable");
+  }
+
+  // Windows/Chrome cannot reliably render HEIC, while iPhone Safari can.
+  // Convert HEIC/HEIF to a temporary JPEG object URL for consistent previews.
+  if (isHeicPath(path)) {
+    if (heicPreviewUrlCache.has(path)) return heicPreviewUrlCache.get(path);
+
+    const response = await fetch(data.signedUrl);
+    if (!response.ok) throw new Error("Unable to download HEIC image.");
+    const sourceBlob = await response.blob();
+    const jpegFile = await convertHeicBlobToJpeg(sourceBlob, path.split("/").pop() || "photo.heic");
+    const objectUrl = URL.createObjectURL(jpegFile);
+    heicPreviewUrlCache.set(path, objectUrl);
+    return objectUrl;
+  }
+
+  return data.signedUrl;
+}
+
 function renderMessages() {
   messagesEl.innerHTML = "";
   emptyState.classList.toggle("hidden", state.messages.length !== 0);
@@ -141,9 +199,14 @@ async function hydrateMessageMedia() {
   await Promise.all(media.map(async (el) => {
     const path = el.dataset.mediaPath;
     if (!path || el.dataset.resolved === "true") return;
-    const { data, error } = await db.storage.from("forever-media").createSignedUrl(path, 60 * 60);
-    if (error) { console.warn("Unable to load shared media:", error); return; }
-    el.src = data.signedUrl; el.dataset.resolved = "true";
+
+    try {
+      el.src = await resolveMediaUrl(path);
+      el.dataset.resolved = "true";
+    } catch (error) {
+      console.warn("Unable to load shared media:", error);
+      el.dataset.mediaError = "true";
+    }
   }));
 }
 function getPreviewableMedia() {
@@ -195,18 +258,18 @@ async function renderActivePreview() {
 
   mediaModalContent.appendChild(media);
 
-  const { data, error } = await db.storage.from("forever-media").createSignedUrl(path, 60 * 60);
-  if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
+  try {
+    const resolvedUrl = await resolveMediaUrl(path);
+    if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
 
-  if (error || !data?.signedUrl) {
+    activePreviewMedia.url = resolvedUrl;
+    media.src = resolvedUrl;
+  } catch (error) {
     console.warn("Forever could not open this media.", error);
-    alert("Forever could not open this media.");
+    alert("Forever could not open this media in this browser.");
     closeMediaPreview();
     return;
   }
-
-  activePreviewMedia.url = data.signedUrl;
-  media.src = data.signedUrl;
 
   if (!video) {
     media.addEventListener("error", () => {
@@ -468,10 +531,24 @@ function isLikelyMediaFile(file) {
 function isVideoFile(file) {
   return Boolean(file && ((file.type && file.type.startsWith("video/")) || /\.(mp4|mov|m4v|webm|ogg|ogv)$/i.test(file.name || "")));
 }
-function handleSelectedMedia() {
-  const file = imageInput.files && imageInput.files[0]; if (!file) return;
-  if (!isLikelyMediaFile(file)) { alert("Please choose a photo or video file."); clearPendingMedia(); return; }
-  if (file.size > 100 * 1024 * 1024) { alert("Please choose a photo or video smaller than 100 MB."); clearPendingMedia(); return; }
+async function handleSelectedMedia() {
+  const selectedFile = imageInput.files && imageInput.files[0]; if (!selectedFile) return;
+  if (!isLikelyMediaFile(selectedFile)) { alert("Please choose a photo or video file."); clearPendingMedia(); return; }
+  if (selectedFile.size > 100 * 1024 * 1024) { alert("Please choose a photo or video smaller than 100 MB."); clearPendingMedia(); return; }
+
+  let file = selectedFile;
+  try {
+    // Convert HEIC/HEIF before upload so every future device receives JPEG.
+    if (isHeicFile(selectedFile)) {
+      file = await convertHeicBlobToJpeg(selectedFile, selectedFile.name || "photo.heic");
+    }
+  } catch (error) {
+    console.warn("Unable to convert HEIC/HEIF:", error);
+    alert("Forever could not convert this HEIC/HEIF photo. Please try again.");
+    clearPendingMedia();
+    return;
+  }
+
   state.pendingMedia = file;
   const reader = new FileReader();
   reader.onerror = () => { alert("Forever could not read this media. Please try another file."); clearPendingMedia(); };
