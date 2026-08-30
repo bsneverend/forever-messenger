@@ -1,4 +1,4 @@
-const CACHE_NAME = "forever-shell-v1";
+const CACHE_NAME = "forever-shell-v2";
 
 const APP_SHELL = [
   "./",
