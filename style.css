@@ -234,3 +234,35 @@ textarea {
   .image-preview-wrap { left:14px; }
   .message-image { width:min(100%,300px); max-height:420px; }
 }
+
+
+/* Reliable native image picker trigger on desktop, iPhone Safari and installed PWA */
+.image-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.add-image-button {
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.add-image-button span {
+  display: block;
+  font-size: 29px;
+  font-weight: 300;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.add-image-button.is-disabled {
+  pointer-events: none;
+  opacity: .45;
+  cursor: not-allowed;
+}
