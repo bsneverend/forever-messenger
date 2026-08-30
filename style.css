@@ -612,3 +612,88 @@ body.media-modal-open { overflow: hidden; }
     transform: translateY(-50%);
   }
 }
+
+
+/* FINAL desktop zoom-safe media modal sizing.
+   Do not let the modal card size itself from a very tall portrait image.
+   Anchor the card directly to the viewport, so browser zoom cannot push the
+   toolbar and image downward outside the visible screen. */
+.media-modal {
+  padding: 0;
+  place-items: stretch;
+}
+
+.media-modal-card {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  bottom: 18px;
+  left: 18px;
+  width: auto;
+  height: auto;
+  max-width: 1180px;
+  max-height: none;
+  margin: 0 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 58px minmax(0, 1fr);
+}
+
+.media-modal-toolbar {
+  min-height: 0;
+  height: 58px;
+  padding: 0 2px 10px;
+}
+
+.media-modal-content {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 0 74px;
+  overflow: hidden;
+  align-self: stretch;
+  justify-self: stretch;
+}
+
+.media-modal-content > img,
+.media-modal-content > video {
+  display: block;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  object-position: center !important;
+}
+
+/* Navigation is positioned from the real viewport-bound card, not from the
+   portrait image's intrinsic height. */
+.media-nav-button {
+  top: calc(50% + 29px);
+}
+
+@media (max-width: 760px) {
+  .media-modal-card {
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: max(10px, env(safe-area-inset-left));
+    max-width: none;
+    margin: 0;
+    grid-template-rows: 54px minmax(0, 1fr);
+  }
+
+  .media-modal-toolbar {
+    height: 54px;
+    padding: 0 4px 8px;
+  }
+
+  .media-modal-content {
+    padding: 0 58px;
+  }
+
+  .media-nav-button {
+    top: 50%;
+  }
+}
