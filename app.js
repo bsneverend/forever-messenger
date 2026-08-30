@@ -146,11 +146,48 @@ async function hydrateMessageMedia() {
 }
 async function openMediaPreview(path) {
   const { data, error } = await db.storage.from("forever-media").createSignedUrl(path, 60 * 60);
-  if (error) return alert("Forever could not open this media.");
+  if (error || !data?.signedUrl) return alert("Forever could not open this media.");
+
   const video = isVideoPath(path);
   activePreviewMedia = { path, url: data.signedUrl, video };
-  mediaModalContent.innerHTML = video ? `<video src="${data.signedUrl}" controls autoplay playsinline></video>` : `<img src="${data.signedUrl}" alt="Media preview" />`;
-  mediaModal.classList.remove("hidden"); document.body.classList.add("media-modal-open");
+
+  // Build the preview with DOM APIs instead of injecting a signed URL into HTML.
+  // This is more reliable on desktop browsers, especially for Supabase URLs with
+  // long query strings, and keeps the preview behavior identical to inline media.
+  mediaModalContent.replaceChildren();
+
+  const media = document.createElement(video ? "video" : "img");
+  media.className = video ? "media-preview-video" : "media-preview-image";
+
+  if (video) {
+    media.controls = true;
+    media.autoplay = true;
+    media.playsInline = true;
+    media.preload = "metadata";
+  } else {
+    media.alt = "Media preview";
+    media.decoding = "async";
+  }
+
+  // Open the modal before assigning src so the browser can calculate the
+  // available desktop viewport correctly when the media loads.
+  mediaModal.classList.remove("hidden");
+  document.body.classList.add("media-modal-open");
+  mediaModalContent.appendChild(media);
+
+  media.src = data.signedUrl;
+
+  if (!video) {
+    media.addEventListener("load", () => {
+      media.classList.add("is-loaded");
+    }, { once: true });
+
+    media.addEventListener("error", () => {
+      console.warn("Forever could not render this image preview.", path);
+      alert("Forever could not display this image preview in this browser.");
+      closeMediaPreview();
+    }, { once: true });
+  }
 }
 function closeMediaPreview() {
   mediaModal.classList.add("hidden"); mediaModalContent.innerHTML = ""; activePreviewMedia = null; document.body.classList.remove("media-modal-open");
