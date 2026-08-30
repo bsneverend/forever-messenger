@@ -40,6 +40,8 @@ const mediaModal = $("media-modal");
 const mediaModalContent = $("media-modal-content");
 const mediaCloseButton = $("media-close-button");
 const mediaShareButton = $("media-share-button");
+const mediaPrevButton = $("media-prev-button");
+const mediaNextButton = $("media-next-button");
 let activePreviewMedia = null;
 
 function initials(name) {
