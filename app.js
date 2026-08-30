@@ -205,7 +205,7 @@ function applyPreviewTransform() {
   previewPanX = Math.min(maxPanX, Math.max(-maxPanX, previewPanX));
   previewPanY = Math.min(maxPanY, Math.max(-maxPanY, previewPanY));
   media.style.transformOrigin = "center center";
-  media.style.transform = "translate(" + previewPanX + "px, " + previewPanY + "px) scale(" + previewZoom + ")";
+  media.style.transform = "translate3d(" + previewPanX + "px, " + previewPanY + "px, 0) scale(" + previewZoom + ")";
 }
 
 function resetPreviewZoom() {
@@ -491,21 +491,37 @@ function endPreviewDrag() {
   mediaModalContent.classList.remove("is-dragging-media");
 }
 
+// Desktop pan: pointer events are used here instead of mouse-only events so
+// trackpads, pens and normal mouse dragging all behave consistently.
 mediaModalContent.addEventListener("pointerdown", (event) => {
-  if (event.pointerType !== "mouse" || event.button !== 0) return;
+  if (event.pointerType === "touch") return;
+  if (event.button !== undefined && event.button !== 0) return;
   if (!startPreviewDrag(event.clientX, event.clientY)) return;
   event.preventDefault();
   mediaModalContent.setPointerCapture?.(event.pointerId);
 });
 mediaModalContent.addEventListener("pointermove", (event) => {
-  if (event.pointerType !== "mouse" || !previewDragging) return;
+  if (event.pointerType === "touch" || !previewDragging) return;
   event.preventDefault();
   movePreviewDrag(event.clientX, event.clientY);
 });
 mediaModalContent.addEventListener("pointerup", (event) => {
-  if (event.pointerType === "mouse") endPreviewDrag();
+  if (event.pointerType !== "touch") endPreviewDrag();
 });
-mediaModalContent.addEventListener("pointercancel", endPreviewDrag);
+mediaModalContent.addEventListener("pointercancel", () => endPreviewDrag());
+
+// Extra delegated controls make the +/- buttons work even if the modal DOM was
+// recreated while the app was running.
+mediaModal.addEventListener("click", (event) => {
+  if (event.target.closest("#media-zoom-in-button")) {
+    event.preventDefault();
+    zoomPreviewBy(0.25);
+  }
+  if (event.target.closest("#media-zoom-out-button")) {
+    event.preventDefault();
+    zoomPreviewBy(-0.25);
+  }
+});
 
 mediaModalContent.addEventListener("touchstart", (event) => {
   if (!activePreviewMedia) return;
