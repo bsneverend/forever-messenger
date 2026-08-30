@@ -116,10 +116,10 @@
       </div>
 
       <form id="composer" class="composer">
-        <input id="image-input" class="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" hidden />
-        <button id="add-image-button" type="button" class="add-image-button" aria-label="Add image" title="Add image">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-        </button>
+        <input id="image-input" class="image-input" type="file" accept="image/*" />
+        <label id="add-image-button" for="image-input" class="add-image-button" aria-label="Add image" title="Add image">
+          <span aria-hidden="true">+</span>
+        </label>
         <div id="image-preview-wrap" class="image-preview-wrap hidden">
           <img id="image-preview" alt="Selected image preview" />
           <button id="remove-image-button" type="button" aria-label="Remove image">×</button>
