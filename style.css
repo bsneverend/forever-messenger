@@ -697,3 +697,78 @@ body.media-modal-open { overflow: hidden; }
     top: 50%;
   }
 }
+
+
+/* Preview controls: compact, balanced and slightly higher in the modal toolbar. */
+.media-modal-toolbar {
+  align-items: flex-start;
+  padding-top: 0;
+}
+
+.media-modal-toolbar > .media-modal-button,
+.media-modal-actions > .media-modal-button,
+.media-zoom-button {
+  transform: translateY(-4px);
+}
+
+.media-modal-button {
+  width: 46px;
+  height: 46px;
+  font-size: 28px;
+}
+
+.media-modal-button:active {
+  transform: translateY(-4px) scale(.96);
+}
+
+.media-modal-actions {
+  align-items: flex-start;
+}
+
+.media-zoom-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.media-zoom-button {
+  font-size: 25px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.media-zoom-button:disabled {
+  opacity: .38;
+  cursor: default;
+}
+
+/* A scaled image must remain clipped inside the preview viewport. */
+.media-modal-content {
+  touch-action: pan-y;
+}
+
+.media-modal-content .media-preview-image {
+  transition: transform .12s ease-out;
+  will-change: transform;
+}
+
+@media (max-width: 760px) {
+  .media-modal-toolbar > .media-modal-button,
+  .media-modal-actions > .media-modal-button {
+    transform: translateY(-5px);
+  }
+
+  .media-modal-button {
+    width: 44px;
+    height: 44px;
+    font-size: 27px;
+  }
+
+  /* Mobile/PWA uses native-feeling two-finger pinch zoom instead of +/- buttons. */
+  .media-zoom-actions {
+    display: none;
+  }
+
+  .media-modal-content {
+    touch-action: none;
+  }
+}
