@@ -782,6 +782,14 @@ body.media-modal-open { overflow: hidden; }
 .media-modal-button:active { transform: scale(.96); }
 #media-close-button { padding: 0 0 4px; line-height: 1; }
 
+/* Optical centering: lift only the + / − glyphs slightly inside their circles.
+   The circular buttons themselves stay exactly where they are. */
+#media-zoom-out-button,
+#media-zoom-in-button {
+  padding: 0 0 4px;
+  line-height: 1;
+}
+
 /* Pan zoomed images with mouse on desktop and one finger on touch devices. */
 .media-modal-content { cursor: default; }
 .media-modal-content .media-preview-image {
