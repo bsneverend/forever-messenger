@@ -100,12 +100,17 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px
 }
 .brand { display: flex; align-items: center; gap: 11px; font-size: 21px; font-weight: 800; letter-spacing: -.4px; }
 .brand-app-icon {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  display: block;
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  max-width: 34px !important;
+  min-height: 34px !important;
+  max-height: 34px !important;
+  flex: 0 0 34px !important;
+  display: block !important;
   border-radius: 10px;
   object-fit: cover;
+  overflow: hidden;
 }
 .brand-mark.small { width: 34px; height: 34px; border-radius: 11px; font-size: 16px; box-shadow: none; }
 .icon-button, .back-button {
