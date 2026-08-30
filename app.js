@@ -383,7 +383,7 @@ composer.addEventListener("submit", async (event) => {
     }
 
     messageInput.value = "";
-    clearPendingImage();
+    clearPendingMedia();
     autoResize();
   } catch (error) {
     alert(error.message || "Message could not be sent.");
