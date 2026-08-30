@@ -214,3 +214,23 @@ textarea {
   .message-bubble { max-width: 84%; }
   .composer { padding: 12px 14px max(12px, env(safe-area-inset-bottom)); }
 }
+
+
+/* Image messages */
+.composer { position: relative; }
+.add-image-button { width:48px; height:48px; flex:0 0 auto; display:grid; place-items:center; border:1px solid var(--line); border-radius:14px; background:#fff; color:var(--muted); }
+.add-image-button:hover { color:var(--accent); border-color:#c9d8f8; background:var(--accent-soft); }
+.add-image-button:disabled { opacity:.45; cursor:not-allowed; }
+.add-image-button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; }
+.image-preview-wrap { position:absolute; left:clamp(20px,4vw,48px); bottom:calc(100% + 8px); width:96px; height:96px; padding:4px; border-radius:16px; background:#fff; border:1px solid var(--line); box-shadow:var(--shadow); }
+.image-preview-wrap img { width:100%; height:100%; display:block; object-fit:cover; border-radius:11px; }
+.image-preview-wrap button { position:absolute; top:-9px; right:-9px; width:26px; height:26px; border:0; border-radius:50%; background:var(--text); color:#fff; font-size:19px; line-height:1; }
+.message-bubble.has-image { padding:5px 5px 8px; }
+.message-bubble.has-image .message-text { padding:7px 9px 0; }
+.message-image-wrap { overflow:hidden; border-radius:14px; }
+.message-image { display:block; width:min(100%,420px); max-height:520px; object-fit:cover; background:#eef1f5; cursor:zoom-in; }
+.message-bubble.has-image .message-meta { padding:0 7px; margin-top:5px; }
+@media (max-width:760px) {
+  .image-preview-wrap { left:14px; }
+  .message-image { width:min(100%,300px); max-height:420px; }
+}
