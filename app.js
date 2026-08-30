@@ -337,7 +337,18 @@ async function renderActivePreview() {
   }
 
   try {
-    const resolvedUrl = await resolveMediaUrl(path);
+    // IMPORTANT: if the media is already visible in the conversation, reuse the
+    // exact browser-resolved source for the preview. This avoids asking Chrome
+    // to decode the same iPhone image through a second URL/code path.
+    const loadedMessageMedia = [...messagesEl.querySelectorAll("[data-media-path]")].find((el) => {
+      return el.dataset.mediaPath === requestPath && (el.currentSrc || el.src);
+    });
+
+    const alreadyWorkingUrl = loadedMessageMedia
+      ? (loadedMessageMedia.currentSrc || loadedMessageMedia.src)
+      : "";
+
+    const resolvedUrl = alreadyWorkingUrl || await resolveMediaUrl(path);
     if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
 
     activePreviewMedia.url = resolvedUrl;
