@@ -114,38 +114,6 @@ function isVideoPath(path = "") {
   return /\.(mp4|mov|m4v|webm|ogg|ogv)$/i.test(String(path).split("?")[0]);
 }
 
-function isHeicPath(path = "") {
-  return /\.(heic|heif)$/i.test(String(path).split("?")[0]);
-}
-
-function isHeicFile(file) {
-  if (!file) return false;
-  return /^(image\/heic|image\/heif)$/i.test(String(file.type || "")) ||
-    /\.(heic|heif)$/i.test(String(file.name || ""));
-}
-
-const heicPreviewUrlCache = new Map();
-const previewSnapshotUrlCache = new Map();
-
-async function convertHeicBlobToJpeg(blob, sourceName = "photo.heic") {
-  if (typeof window.heic2any !== "function") {
-    throw new Error("HEIC converter is not available yet.");
-  }
-
-  const converted = await window.heic2any({
-    blob,
-    toType: "image/jpeg",
-    quality: 0.92
-  });
-
-  const jpegBlob = Array.isArray(converted) ? converted[0] : converted;
-  const safeName = String(sourceName).replace(/\.(heic|heif)$/i, "") || "photo";
-  return new File([jpegBlob], safeName + ".jpg", {
-    type: "image/jpeg",
-    lastModified: Date.now()
-  });
-}
-
 async function getSignedMediaUrl(path) {
   const { data, error } = await db.storage
     .from("forever-media")
@@ -156,87 +124,6 @@ async function getSignedMediaUrl(path) {
   }
 
   return data.signedUrl;
-}
-
-async function blobLooksLikeHeic(blob) {
-  const type = String(blob?.type || "").toLowerCase();
-  if (type.includes("heic") || type.includes("heif")) return true;
-
-  // Some iPhone uploads arrive with an incorrect/empty MIME type or extension.
-  // HEIC/HEIF files are ISO BMFF containers and usually identify themselves near byte 4.
-  const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
-  const ascii = String.fromCharCode(...bytes);
-  return /ftyp(?:heic|heix|hevc|hevx|mif1|msf1)/i.test(ascii);
-}
-
-async function getRenderedPreviewUrl(path, sourceImage) {
-  if (!sourceImage || !sourceImage.complete || !sourceImage.naturalWidth || !sourceImage.naturalHeight) {
-    return "";
-  }
-
-  if (previewSnapshotUrlCache.has(path)) {
-    return previewSnapshotUrlCache.get(path);
-  }
-
-  try {
-    // The chat thumbnail is already decoded successfully. Rasterize those exact
-    // pixels into a fresh browser-native PNG for the modal. This avoids a second
-    // HEIC/HEIF decode or Chromium re-decode of the original resource.
-    const canvas = document.createElement("canvas");
-    canvas.width = sourceImage.naturalWidth;
-    canvas.height = sourceImage.naturalHeight;
-
-    const context = canvas.getContext("2d", { alpha: false });
-    context.drawImage(sourceImage, 0, 0);
-
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) return "";
-
-    const url = URL.createObjectURL(blob);
-    previewSnapshotUrlCache.set(path, url);
-    return url;
-  } catch (error) {
-    // Some remote images may be canvas-tainted; normal source loading below
-    // remains the fallback for those.
-    console.warn("Forever could not snapshot rendered media for preview.", error);
-    return "";
-  }
-}
-
-async function getCompatibleHeicUrl(path, signedUrl) {
-  if (heicPreviewUrlCache.has(path)) return heicPreviewUrlCache.get(path);
-
-  const response = await fetch(signedUrl);
-  if (!response.ok) throw new Error("Unable to download image.");
-
-  const sourceBlob = await response.blob();
-  if (!(await blobLooksLikeHeic(sourceBlob))) {
-    throw new Error("The image is not HEIC/HEIF.");
-  }
-
-  const jpegFile = await convertHeicBlobToJpeg(
-    sourceBlob,
-    path.split("/").pop() || "photo.heic"
-  );
-  const objectUrl = URL.createObjectURL(jpegFile);
-  heicPreviewUrlCache.set(path, objectUrl);
-  return objectUrl;
-}
-
-async function resolveMediaUrl(path) {
-  const signedUrl = await getSignedMediaUrl(path);
-
-  // Known HEIC/HEIF paths are converted before assigning to <img>.
-  if (isHeicPath(path)) {
-    return getCompatibleHeicUrl(path, signedUrl);
-  }
-
-  return signedUrl;
-}
-
-async function resolveImageFallbackUrl(path) {
-  const signedUrl = await getSignedMediaUrl(path);
-  return getCompatibleHeicUrl(path, signedUrl);
 }
 
 function renderMessages() {
@@ -264,31 +151,13 @@ function renderMessages() {
 }
 async function hydrateMessageMedia() {
   const media = [...messagesEl.querySelectorAll("[data-media-path]")];
+
   await Promise.all(media.map(async (el) => {
     const path = el.dataset.mediaPath;
     if (!path || el.dataset.resolved === "true") return;
 
     try {
-      const resolvedUrl = await resolveMediaUrl(path);
-
-      // Attach the fallback before assigning src. This is important for images
-      // that fail immediately from browser cache/unsupported codecs.
-      if (el.tagName === "IMG") {
-        el.addEventListener("error", async () => {
-          if (el.dataset.heicFallback === "true") return;
-          el.dataset.heicFallback = "true";
-
-          try {
-            el.src = await resolveImageFallbackUrl(path);
-            el.dataset.resolved = "true";
-          } catch (fallbackError) {
-            console.warn("Unable to render shared image:", fallbackError);
-            el.dataset.mediaError = "true";
-          }
-        }, { once: true });
-      }
-
-      el.src = resolvedUrl;
+      el.src = await getSignedMediaUrl(path);
       el.dataset.resolved = "true";
     } catch (error) {
       console.warn("Unable to load shared media:", error);
@@ -296,6 +165,7 @@ async function hydrateMessageMedia() {
     }
   }));
 }
+
 function getPreviewableMedia() {
   return state.messages.filter((message) => Boolean(message.image_url));
 }
@@ -414,37 +284,20 @@ async function renderActivePreview() {
   mediaModalContent.replaceChildren(media);
 
   if (!video) {
-    media.addEventListener("error", async () => {
-      if (activePreviewMedia?.path !== requestPath) return;
-
-      // Last-resort compatibility conversion for files whose real bytes are
-      // HEIC/HEIF even when their filename extension is misleading.
-      if (media.dataset.heicFallback !== "true") {
-        media.dataset.heicFallback = "true";
-        try {
-          const fallbackUrl = await resolveImageFallbackUrl(requestPath);
-          if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
-          activePreviewMedia.url = fallbackUrl;
-          media.src = fallbackUrl;
-          return;
-        } catch (fallbackError) {
-          console.warn("Forever HEIC fallback failed.", fallbackError);
-        }
-      }
-
+    media.addEventListener("error", () => {
       if (activePreviewMedia?.path !== requestPath) return;
       console.warn("Forever could not render this image preview.", requestPath);
       alert("Forever could not display this image preview in this browser.");
       closeMediaPreview();
-    }, { once: false });
+    }, { once: true });
   }
 
   try {
-    const signedOrCompatibleUrl = await resolveMediaUrl(path);
+    const signedUrl = await getSignedMediaUrl(path);
     if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
 
-    activePreviewMedia.url = signedOrCompatibleUrl;
-    media.src = signedOrCompatibleUrl;
+    activePreviewMedia.url = signedUrl;
+    media.src = signedUrl;
   } catch (error) {
     console.warn("Forever could not open this media.", error);
     alert("Forever could not open this media in this browser.");
@@ -704,43 +557,41 @@ function isVideoFile(file) {
   return Boolean(file && ((file.type && file.type.startsWith("video/")) || /\.(mp4|mov|m4v|webm|ogg|ogv)$/i.test(file.name || "")));
 }
 async function handleSelectedMedia() {
-  const selectedFile = imageInput.files && imageInput.files[0]; if (!selectedFile) return;
-  if (!isLikelyMediaFile(selectedFile)) { alert("Please choose a photo or video file."); clearPendingMedia(); return; }
-  if (selectedFile.size > 100 * 1024 * 1024) { alert("Please choose a photo or video smaller than 100 MB."); clearPendingMedia(); return; }
+  const file = imageInput.files && imageInput.files[0];
+  if (!file) return;
 
-  let file = selectedFile;
-  try {
-    // Do not trust the extension or MIME type from iPhone. Some iOS pickers can
-    // expose HEIC bytes while reporting image/jpeg or giving a non-HEIC name.
-    // Inspect the actual file header and normalize every HEIC/HEIF upload to JPEG
-    // BEFORE it ever reaches Supabase. This is the most reliable cross-browser
-    // solution because desktop preview never has to decode HEIC.
-    const shouldNormalizeHeic = !isVideoFile(selectedFile) && (
-      isHeicFile(selectedFile) || await blobLooksLikeHeic(selectedFile)
-    );
-
-    if (shouldNormalizeHeic) {
-      file = await convertHeicBlobToJpeg(selectedFile, selectedFile.name || "photo.heic");
-    }
-  } catch (error) {
-    console.warn("Unable to convert HEIC/HEIF:", error);
-    alert("Forever could not convert this HEIC/HEIF photo. Please try again.");
+  if (!isLikelyMediaFile(file)) {
+    alert("Please choose a photo or video file.");
     clearPendingMedia();
     return;
   }
 
+  if (file.size > 100 * 1024 * 1024) {
+    alert("Please choose a photo or video smaller than 100 MB.");
+    clearPendingMedia();
+    return;
+  }
+
+  // Preserve the exact file selected by the user. No conversion,
+  // recompression, canvas processing, or format normalization before upload.
   state.pendingMedia = file;
-  const reader = new FileReader();
-  reader.onerror = () => { alert("Forever could not read this media. Please try another file."); clearPendingMedia(); };
-  reader.onload = () => {
-    if (state.pendingMedia !== file) return;
-    state.pendingMediaPreviewUrl = String(reader.result || "");
-    if (isVideoFile(file)) { videoPreview.src = state.pendingMediaPreviewUrl; videoPreview.classList.remove("hidden"); imagePreview.classList.add("hidden"); }
-    else { imagePreview.src = state.pendingMediaPreviewUrl; imagePreview.classList.remove("hidden"); videoPreview.classList.add("hidden"); }
-    imagePreviewWrap.classList.remove("hidden");
-  };
-  reader.readAsDataURL(file);
+
+  const previewUrl = URL.createObjectURL(file);
+  state.pendingMediaPreviewUrl = previewUrl;
+
+  if (isVideoFile(file)) {
+    videoPreview.src = previewUrl;
+    videoPreview.classList.remove("hidden");
+    imagePreview.classList.add("hidden");
+  } else {
+    imagePreview.src = previewUrl;
+    imagePreview.classList.remove("hidden");
+    videoPreview.classList.add("hidden");
+  }
+
+  imagePreviewWrap.classList.remove("hidden");
 }
+
 imageInput.addEventListener("change", handleSelectedMedia);
 imageInput.addEventListener("input", handleSelectedMedia);
 async function uploadPendingMedia() {
