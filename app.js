@@ -282,7 +282,6 @@ function clearPendingImage() {
   }
 }
 
-addImageButton.addEventListener("click", () => imageInput.click());
 removeImageButton.addEventListener("click", clearPendingImage);
 
 imageInput.addEventListener("change", () => {
@@ -359,7 +358,7 @@ composer.addEventListener("submit", async (event) => {
     alert(error.message || "Message could not be sent.");
   } finally {
     sendButton.disabled = false;
-    addImageButton.disabled = false;
+    addImageButton.classList.remove("is-disabled");
     messageInput.focus();
   }
 });
