@@ -311,6 +311,52 @@ function updateMediaNavigation() {
   mediaNextButton.disabled = !hasMultiple || index < 0 || index >= items.length - 1;
 }
 
+function findLoadedMessageMedia(path) {
+  return [...messagesEl.querySelectorAll("[data-media-path]")].find((el) => {
+    return el.dataset.mediaPath === path && (el.currentSrc || el.src);
+  }) || null;
+}
+
+let activePreviewSource = null;
+
+function restoreActivePreviewSource() {
+  if (!activePreviewSource) return;
+
+  const { element, parent, nextSibling, className } = activePreviewSource;
+  element.className = className;
+
+  if (parent && parent.isConnected) {
+    if (nextSibling && nextSibling.parentNode === parent) {
+      parent.insertBefore(element, nextSibling);
+    } else {
+      parent.appendChild(element);
+    }
+  }
+
+  activePreviewSource = null;
+}
+
+function mountAlreadyRenderedMedia(path, video) {
+  const source = findLoadedMessageMedia(path);
+  if (!source) return null;
+
+  // For images, only move an element that has actually decoded. This is the key
+  // fallback for Firefox/Chromium when an iPhone-originated image can render in
+  // the chat bubble but becomes blank after creating a second <img>.
+  if (!video && (!(source instanceof HTMLImageElement) || !source.naturalWidth || !source.naturalHeight)) {
+    return null;
+  }
+
+  const parent = source.parentNode;
+  const nextSibling = source.nextSibling;
+  const className = source.className;
+
+  activePreviewSource = { element: source, parent, nextSibling, className };
+  source.className = video ? "media-preview-video" : "media-preview-image";
+  mediaModalContent.replaceChildren(source);
+  return source;
+}
+
 async function openMediaPreview(path) {
   const items = getPreviewableMedia();
   const index = items.findIndex((message) => message.image_url === path);
@@ -327,8 +373,28 @@ async function renderActivePreview() {
 
   const { path, video } = activePreviewMedia;
   const requestPath = path;
-  updateMediaNavigation();
+
+  // Put the previously previewed node back before navigating to another item.
+  restoreActivePreviewSource();
   mediaModalContent.replaceChildren();
+  updateMediaNavigation();
+
+  // First choice: move the exact media element that is already rendered inside
+  // the conversation into the modal. No second request, no second HEIC decode,
+  // and no canvas re-rasterization. This is intentionally used before every
+  // other preview strategy and fixes the Firefox blank-preview path.
+  const existing = mountAlreadyRenderedMedia(requestPath, video);
+  if (existing) {
+    if (video) {
+      existing.controls = true;
+      existing.playsInline = true;
+      existing.autoplay = true;
+      existing.play?.().catch(() => {});
+    }
+
+    activePreviewMedia.url = existing.currentSrc || existing.src || null;
+    return;
+  }
 
   const media = document.createElement(video ? "video" : "img");
   media.className = video ? "media-preview-video" : "media-preview-image";
@@ -340,7 +406,7 @@ async function renderActivePreview() {
     media.preload = "metadata";
   } else {
     media.alt = "Media preview";
-    media.decoding = "sync";
+    media.decoding = "async";
   }
 
   mediaModalContent.appendChild(media);
@@ -349,8 +415,6 @@ async function renderActivePreview() {
     media.addEventListener("error", async () => {
       if (activePreviewMedia?.path !== requestPath) return;
 
-      // Some iPhone images have a JPG/empty extension but still contain HEIC data.
-      // If native browser rendering fails, inspect and convert the actual file.
       if (media.dataset.heicFallback !== "true") {
         media.dataset.heicFallback = "true";
         try {
@@ -372,42 +436,31 @@ async function renderActivePreview() {
   }
 
   try {
-    // IMPORTANT: if the media is already visible in the conversation, reuse the
-    // exact browser-resolved source for the preview. This avoids asking Chrome
-    // to decode the same iPhone image through a second URL/code path.
-    const loadedMessageMedia = [...messagesEl.querySelectorAll("[data-media-path]")].find((el) => {
-      return el.dataset.mediaPath === requestPath && (el.currentSrc || el.src);
-    });
-
-    const renderedSnapshotUrl = (!video && loadedMessageMedia instanceof HTMLImageElement)
-      ? await getRenderedPreviewUrl(requestPath, loadedMessageMedia)
-      : "";
-
-    const alreadyWorkingUrl = loadedMessageMedia
-      ? (loadedMessageMedia.currentSrc || loadedMessageMedia.src)
-      : "";
-
-    const resolvedUrl = renderedSnapshotUrl || alreadyWorkingUrl || await resolveMediaUrl(path);
+    const signedOrCompatibleUrl = await resolveMediaUrl(path);
     if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
 
-    activePreviewMedia.url = resolvedUrl;
-    media.src = resolvedUrl;
+    activePreviewMedia.url = signedOrCompatibleUrl;
 
-    // Force the large desktop preview to complete decoding before the browser
-    // composites the modal. This prevents Chromium from leaving some large
-    // iPhone screenshots as a blank layer after an async re-decode.
-    if (!video && typeof media.decode === "function") {
+    // Decode before showing the fallback-created node. This avoids a blank first
+    // paint when a large phone image is decoded asynchronously.
+    if (!video) {
+      const preload = new Image();
+      preload.decoding = "async";
+      preload.src = signedOrCompatibleUrl;
       try {
-        await media.decode();
+        await preload.decode();
       } catch (_) {
-        // The normal error handler above performs the HEIC fallback when needed.
+        // The onerror handler on the visible image below will run the HEIC path.
       }
+
+      if (!activePreviewMedia || activePreviewMedia.path !== requestPath) return;
     }
+
+    media.src = signedOrCompatibleUrl;
   } catch (error) {
     console.warn("Forever could not open this media.", error);
     alert("Forever could not open this media in this browser.");
     closeMediaPreview();
-    return;
   }
 }
 
@@ -430,6 +483,7 @@ function navigateMedia(direction) {
 }
 
 function closeMediaPreview() {
+  restoreActivePreviewSource();
   mediaModal.classList.add("hidden");
   mediaModalContent.replaceChildren();
   activePreviewMedia = null;
